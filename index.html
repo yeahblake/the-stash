@@ -40,14 +40,15 @@
   .hint{position:fixed;left:0;right:0;bottom:24px;text-align:center;z-index:5;pointer-events:none;
     font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--faint);opacity:0;transition:opacity .8s;}
   .hint.show{opacity:.85;}
-  .nav{position:fixed;left:0;right:0;bottom:52px;z-index:6;display:flex;gap:22px;justify-content:center;
-    align-items:center;opacity:0;transition:opacity .6s;pointer-events:none;}
+  .nav{position:fixed;left:0;right:0;bottom:50px;z-index:6;display:flex;gap:20px;justify-content:center;
+    align-items:baseline;flex-wrap:wrap;opacity:0;transition:opacity .6s;pointer-events:none;}
   .nav.show{opacity:1;}
-  .nav button{position:relative;width:11px;height:11px;padding:0;border:none;border-radius:2px;
-    background:#b6b4ac;cursor:pointer;pointer-events:auto;transition:transform .2s, background .2s;}
-  .nav button::after{content:"";position:absolute;inset:-15px;}
-  .nav button:hover{transform:scale(1.18);}
-  .nav button.on{background:var(--ink);}
+  .nav button{position:relative;padding:0;border:none;background:none;cursor:pointer;pointer-events:auto;
+    font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:lowercase;
+    color:var(--faint);transition:color .2s, opacity .2s;}
+  .nav button::after{content:"";position:absolute;inset:-12px;}
+  .nav button:hover{color:var(--ink);}
+  .nav button.on{color:var(--ink);}
   .nav button:disabled{cursor:default;}
   .cap{position:fixed;left:22px;bottom:22px;z-index:5;pointer-events:none;font-family:var(--sans);
     font-size:12px;letter-spacing:.01em;color:var(--mut);opacity:0;transition:opacity .35s;text-transform:lowercase;}
@@ -101,7 +102,7 @@
   .thought.show{opacity:1;}
   #thoughtText{color:var(--ink);line-height:1.12;max-width:min(58vw,760px);letter-spacing:-0.01em;
     font-family:'Alte Haas Grotesk',-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
-    font-weight:400;overflow-wrap:break-word;text-wrap:balance;transition:opacity .24s ease;}
+    font-weight:400;overflow-wrap:break-word;text-wrap:pretty;transition:opacity .24s ease;}
   #thoughtText .w{display:inline-block;opacity:0;transform:translateY(.3em);
     animation:wordIn .55s cubic-bezier(.2,.75,.2,1) both;}
   @keyframes wordIn{to{opacity:1;transform:none;}}
@@ -122,8 +123,8 @@
   body.ambient{background:#000;}
   body.ambient .c-name,body.ambient .c-title,body.ambient .c-clock,body.ambient .c-screen,body.ambient .c-attr{color:#555;}
   body.ambient .fcap{color:#666;}
-  body.ambient .nav button{background:#3a3a3a;}
-  body.ambient .nav button.on{background:#8a8a8a;}
+  body.ambient .nav button{color:#3a3a3a;}
+  body.ambient .nav button.on{color:#8a8a8a;}
   body.ambient .c-bar{opacity:1;}
 
   /* FIXED: media block moved to the very END so the coarse rules win the source-order tie.
@@ -197,6 +198,7 @@ const FEATURE_DIST=16, FOV=55;
 const BLURMAX=11;
 const AUTO_AMP=COARSE?1.4:0.7;
 const PARALLAX_X=COARSE?0.9:3, PARALLAX_Y=COARSE?0.6:2;
+let fieldR=CLOUD_R;   // current field's on-screen extent — drives how close the camera sits
 
 function palette(){
   return THEME==="dark"
@@ -380,12 +382,12 @@ function initThree(){
   addEventListener('orientationchange',()=>setTimeout(onResize,200));
 }
 function fitCamera(){
-  const a=camera.aspect, t=Math.tan((FOV*Math.PI/180)/2), R=CLOUD_R;
+  const a=camera.aspect, t=Math.tan((FOV*Math.PI/180)/2), R=fieldR;
   if(COARSE){
-    camera.position.z=Math.min(46,Math.max(24,R*1.05/t));return;
+    camera.position.z=Math.min(46,Math.max(19,R*1.12/t));return;
   }
-  const dH=R*1.02/t, dW=R*1.02/(t*Math.max(0.35,a));
-  camera.position.z=Math.min(70,Math.max(30,Math.max(dH,dW)));
+  const dH=R*1.04/t, dW=R*1.04/(t*Math.max(0.35,a));
+  camera.position.z=Math.min(70,Math.max(18,Math.max(dH,dW)));   // lower floor -> closer on small fields
 }
 function randInSphere(r){let v;do{v=new THREE.Vector3(Math.random()*2-1,Math.random()*2-1,Math.random()*2-1);}
   while(v.lengthSq()>1);return v.multiplyScalar(r);}
@@ -500,9 +502,11 @@ function buildField(idx,pool){
     const n=Math.min(pool.length, Math.max(3, base));
     const R=Math.max(6.5, CLOUD_R*Math.sqrt(n/SHOW_MAX));
     const cs=1.4-((Math.min(n,40)-3)/37)*0.7;   // fewer = big, more = smaller (continuous across 3..40)
+    const centerBias=0.55+0.45*(Math.min(n,SHOW_MAX)/SHOW_MAX);   // low count -> pull toward centre
     layout=sampleFavorNew(pool,n).map(it=>{
       const h=randInSphere(R);h.z*=DEPTH;
       if(COARSE){h.x*=0.5;h.y*=1.1;}
+      h.x*=centerBias; h.y*=centerBias;                            // group centrally, less side-lean
       const sz = it.kind==='text'
         ? (2.6+Math.random()*1.3)                                   // text reads larger than a thumbnail
         : Math.max(1.0,Math.min(6.2,pickSize(it.weight)*cs));
@@ -510,6 +514,11 @@ function buildField(idx,pool){
     });
     layouts[slug]=layout;
   }
+  // frame the camera to THIS layout's extent -> closer & tighter when there are fewer tiles
+  let maxXY=5;
+  for(const L of layout){ const d=Math.hypot(L.home.x,L.home.y); if(d>maxXY)maxXY=d; }
+  fieldR=maxXY+3;
+  fitCamera();
   layout.forEach(L=>makeParticle(L.item,L.home.clone(),ch.label,L.size));
 }
 
@@ -600,8 +609,13 @@ function step(dt,time){
   }
   const par=focusedP?0.4:1;
   const swX=Math.sin(time*0.16)*AUTO_AMP, swY=Math.cos(time*0.12)*AUTO_AMP*0.6;
-  camera.position.x+=((mouseNDC.x*PARALLAX_X*par+swX)-camera.position.x)*0.03;
-  camera.position.y+=((mouseNDC.y*PARALLAX_Y*par+swY)-camera.position.y)*0.03;
+  const ex=Math.min(1,Math.max(0,(Math.abs(mouseNDC.x)-0.55)/0.45));   // 0..1 as cursor nears L/R edge
+  const ey=Math.min(1,Math.max(0,(Math.abs(mouseNDC.y)-0.55)/0.45));
+  const boostX=1+ex*ex*2.2, boostY=1+ey*ey*1.5;                        // swing further into the field at edges
+  camera.position.x+=((mouseNDC.x*PARALLAX_X*boostX*par+swX)-camera.position.x)*0.03;
+  camera.position.y+=((mouseNDC.y*PARALLAX_Y*boostY*par+swY)-camera.position.y)*0.03;
+  const roll=focusedP?0:mouseNDC.x*ex*0.06;                            // subtle tilt toward the edge (~3.4deg max)
+  camera.up.set(Math.sin(roll),Math.cos(roll),0);
   camera.lookAt(0,0,0);
   _fwd.set(0,0,0).sub(camera.position).normalize();
   _tgt.copy(camera.position).addScaledVector(_fwd,FEATURE_DIST);
@@ -693,6 +707,7 @@ function fadeWorld(target){return new Promise(res=>{fadeTarget=target;fadeResolv
 function buildNav(){
   CHANNELS.forEach((ch,i)=>{
     const b=document.createElement('button');
+    b.textContent=ch.label.replace(/^\./,'');   // ".img" -> "img", named tabs not dots
     b.setAttribute('aria-label',ch.label);b.title=ch.label;
     if(i===active)b.classList.add('on');
     b.addEventListener('click',ev=>{ev.stopPropagation();switchTo(i);});
@@ -718,14 +733,20 @@ async function switchTo(idx){
 /* ---------- .thought type mode: one statement, one open-source face, re-rolled on landing/click ---------- */
 function isTypeChannel(idx){return CHANNELS[idx].mode==='type';}
 function pickFont(){return FONTS[(Math.random()*FONTS.length)|0];}
+const MAX_WORDS=45;
 function renderWords(text){                                 // one span per word -> staggered pop-in
   thoughtText.textContent='';
-  const words=text.split(/\s+/).filter(Boolean);
+  let words=text.split(/\s+/).filter(Boolean);
+  const truncated=words.length>MAX_WORDS;                   // hard cap at 45 words
+  if(truncated) words=words.slice(0,MAX_WORDS);
   words.forEach((w,i)=>{
     const s=document.createElement('span');
-    s.className='w'; s.textContent=w; s.style.animationDelay=Math.min(i*0.06,1.6)+'s';
+    s.className='w';
+    s.textContent=(truncated&&i===words.length-1)?w+'…':w;
+    s.style.animationDelay=Math.min(i*0.06,1.6)+'s';
     thoughtText.appendChild(s);
-    if(i<words.length-1) thoughtText.appendChild(document.createTextNode(' '));
+    if(i<words.length-1)                                    // NBSP after first 2 gaps keeps >=3 words on line 1
+      thoughtText.appendChild(document.createTextNode(i<2?' ':' '));
   });
 }
 function fitThought(){                                     // shrink until it fits the padded box (leaves the hint alone)
@@ -743,7 +764,9 @@ function enterTypeMode(pool){
   typeMode=true; if(ambient)exitAmbient();
   document.body.classList.add('typemode');
   attrEl.textContent='.thought · @yeah-blake';
-  typePool=pool.filter(it=>it.kind==='text');
+  const texts=pool.filter(it=>it.kind==='text');
+  const short=texts.filter(it=>it.text.split(/\s+/).filter(Boolean).length<=MAX_WORDS);
+  typePool = short.length ? short : texts;      // prefer whole thoughts already under the limit
   showRandomThought(true);
 }
 function showRandomThought(first){
